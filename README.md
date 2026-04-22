@@ -1,95 +1,53 @@
-# Remote System Health Monitoring Service
-**CN Mini Project – Topic 23 | Protocol: UDP | Language: Python**
+# Remote Health Monitoring with Web Dashboard
 
----
+This project monitors CPU, memory, and disk usage from multiple clients over UDP and displays the results on a live web dashboard.
 
-## Overview
-A secure, multi-client system health monitoring service where remote nodes (clients)
-periodically collect CPU, memory, and disk metrics and transmit them over **encrypted
-UDP packets** to a central aggregation server. The server decrypts, analyzes, and
-displays live metrics with threshold-based alerts.
-
----
-
-## Security Approach
-Python's built-in `ssl` module does not support **DTLS** (Datagram TLS — the TLS
-equivalent for UDP). To satisfy the security requirement while keeping UDP as the
-transport protocol, **Fernet symmetric encryption** is used at the application layer.
-
-Fernet provides:
-- **AES-128-CBC** encryption for confidentiality
-- **HMAC-SHA256** authentication to detect tampering
-- Any modified or forged packet is automatically rejected by the server
-
----
-
-## Architecture
-```
- ┌─────────────┐      Encrypted UDP packet      ┌──────────────────────────┐
- │  Node A     │ ────────────────────────────▶  │                          │
- │  client.py  │                                │   Central Server         │
- └─────────────┘                                │   server.py              │
-                                                │                          │
- ┌─────────────┐      Encrypted UDP packet      │  • Decrypts packets      │
- │  Node B     │ ────────────────────────────▶  │  • Aggregates metrics    │
- │  client.py  │                                │  • Checks thresholds     │
- └─────────────┘                                │  • Generates alerts      │
-                                                │  • One thread/packet     │
- ┌─────────────┐                                └──────────────────────────┘
- │  load_test  │ ── 20 simulated UDP clients ─▶  (performance testing)
- └─────────────┘
-```
-
----
+## Features
+- UDP socket based monitoring
+- Encrypted packet transfer using Fernet
+- Multi-client support
+- Threshold-based alerts
+- Offline node detection
+- Summary cards
+- Search and status filter
+- Selected node trend chart
+- Node comparison chart
+- Recent alerts panel
+- Recent packet history
 
 ## Files
-| File | Description |
-|------|-------------|
-| `server.py` | Central server — UDP socket, decrypt, aggregate, alert |
-| `client.py` | Monitoring node — collects real metrics, encrypts, sends via UDP |
-| `security.py` | Fernet encryption/decryption (application-layer security) |
-| `config.py` | Shared configuration — IP, port, thresholds, interval |
-| `load_test.py` | Simulates 20 concurrent encrypted UDP clients |
+- `client.py` - client that collects metrics and sends packets
+- `server.py` - UDP receiver + Flask web dashboard
+- `config.py` - configuration values
+- `security.py` - shared encryption helpers
+- `templates/index.html` - dashboard page
+- `static/style.css` - dashboard styling
 
----
-
-## Setup & Usage
-
-### Step 1 — Install dependencies
+## Install
 ```bash
-pip install psutil cryptography
+pip install psutil cryptography flask
 ```
 
-### Step 2 — Start the server
+## Run
+Start the server first:
 ```bash
 python server.py
 ```
 
-### Step 3 — Start one or more clients (separate terminals)
-```bash
-python client.py
+Open the dashboard:
+```text
+http://127.0.0.1:5000
 ```
 
-### Step 4 — Run load test (performance evaluation)
+Run clients in separate terminals:
 ```bash
-python load_test.py
+python client.py node-1 --server-ip 127.0.0.1 --port 9999
+python client.py node-2 --server-ip 127.0.0.1 --port 9999
+python client.py node-3 --server-ip 127.0.0.1 --port 9999
 ```
 
----
+## How offline works
+A node becomes offline if the server does not receive a packet from that node for more than `OFFLINE_TIMEOUT` seconds.
 
-## Configuration (`config.py`)
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `SERVER_IP` | `127.0.0.1` | Server IP address |
-| `SERVER_PORT` | `9999` | UDP port |
-| `CPU_THRESHOLD` | `80` | Alert if CPU % exceeds this |
-| `MEM_THRESHOLD` | `90` | Alert if Memory % exceeds this |
-| `DISK_THRESHOLD` | `90` | Alert if Disk % exceeds this |
-| `SEND_INTERVAL` | `5` | Seconds between metric reports |
-
----
-
-## Metrics Collected
-- **CPU Usage** (%) via `psutil.cpu_percent()`
-- **Memory Usage** (%) via `psutil.virtual_memory().percent`
-- **Disk Usage** (%) via `psutil.disk_usage('/').percent`
+## Viva explanation
+The UDP socket layer is the core monitoring system. The web dashboard is only the visualization layer on top of the aggregation server.
