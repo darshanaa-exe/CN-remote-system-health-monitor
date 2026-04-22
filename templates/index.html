@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Health Monitoring Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="page">
+    <header class="hero">
+        <div>
+            <h1>Remote Health Monitoring Dashboard</h1>
+            <p>UDP-based multi-client monitoring with encrypted packet transfer and live web visualization.</p>
+        </div>
+        <div class="last-update-wrap">
+            <span class="label">Last updated</span>
+            <span id="lastUpdated">--:--:--</span>
+        </div>
+    </header>
+
+    <section class="summary-grid" id="summaryCards">
+        <article class="card summary-card">
+            <span class="summary-label">Total Nodes</span>
+            <strong id="totalNodes">0</strong>
+        </article>
+        <article class="card summary-card">
+            <span class="summary-label">Online Nodes</span>
+            <strong id="onlineNodes">0</strong>
+        </article>
+        <article class="card summary-card">
+            <span class="summary-label">Offline Nodes</span>
+            <strong id="offlineNodes">0</strong>
+        </article>
+        <article class="card summary-card">
+            <span class="summary-label">Active Alerts</span>
+            <strong id="activeAlerts">0</strong>
+        </article>
+        <article class="card summary-card">
+            <span class="summary-label">Total Packets</span>
+            <strong id="totalPackets">0</strong>
+        </article>
+    </section>
+
+    <section class="main-grid">
+        <div class="card panel">
+            <div class="panel-head">
+                <div>
+                    <h2>Node Status</h2>
+                    <p>Latest health snapshot of each connected node.</p>
+                </div>
+                <div class="toolbar">
+                    <input type="text" id="searchInput" placeholder="Search node or hostname">
+                    <select id="statusFilter">
+                        <option value="ALL">All Status</option>
+                        <option value="OK">OK</option>
+                        <option value="ALERT">Alert</option>
+                        <option value="OFFLINE">Offline</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="table-wrap">
+                <table id="nodesTable">
+                    <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>IP</th>
+                        <th>Hostname</th>
+                        <th>CPU</th>
+                        <th>Memory</th>
+                        <th>Disk</th>
+                        <th>Status</th>
+                        <th>Last Seen</th>
+                    </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <aside class="side-stack">
+            <div class="card panel">
+                <div class="panel-head compact">
+                    <div>
+                        <h2>Recent Alerts</h2>
+                        <p>Latest threshold violations.</p>
+                    </div>
+                </div>
+                <div id="alertsPanel" class="alerts-list empty-state">No alerts yet.</div>
+            </div>
+        </aside>
+    </section>
+
+    <section class="bottom-grid">
+        <div class="card panel">
+            <div class="panel-head compact">
+                <div>
+                    <h2>Node Comparison</h2>
+                    <p>Compare the latest CPU, memory, and disk usage across nodes.</p>
+                </div>
+            </div>
+            <div class="chart-wrap">
+                <canvas id="comparisonChart" width="860" height="320"></canvas>
+            </div>
+        </div>
+
+        <div class="card panel">
+            <div class="panel-head compact">
+                <div>
+                    <h2>Recent Packet History</h2>
+                    <p>Most recent packets received by the server.</p>
+                </div>
+            </div>
+            <div class="table-wrap history-wrap">
+                <table id="historyTable">
+                    <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>CPU</th>
+                        <th>Memory</th>
+                        <th>Disk</th>
+                        <th>Status</th>
+                        <th>Time</th>
+                    </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script>
+let dashboardData = null;
+
+function badgeClass(status) {
+    if (status === "OFFLINE") return "badge badge-offline";
+    if (status.includes("ALERT")) return "badge badge-alert";
+    return "badge badge-ok";
+}
+
+function formatStatus(status) {
+    if (status === "OFFLINE") return "OFFLINE";
+    if (status.includes("ALERT")) return "ALERT";
+    return "OK";
+}
+
+function updateSummary(summary) {
+    document.getElementById("totalNodes").textContent = summary.total_nodes;
+    document.getElementById("onlineNodes").textContent = summary.online_nodes;
+    document.getElementById("offlineNodes").textContent = summary.offline_nodes;
+    document.getElementById("activeAlerts").textContent = summary.active_alerts;
+    document.getElementById("totalPackets").textContent = summary.total_packets;
+}
+
+function renderNodes(nodes) {
+    const searchText = document.getElementById("searchInput").value.trim().toLowerCase();
+    const filter = document.getElementById("statusFilter").value;
+    const tbody = document.querySelector("#nodesTable tbody");
+    tbody.innerHTML = "";
+
+    const filtered = nodes.filter(node => {
+        const matchesSearch =
+            node.node_id.toLowerCase().includes(searchText) ||
+            node.hostname.toLowerCase().includes(searchText) ||
+            node.ip.toLowerCase().includes(searchText);
+
+        let normalized = formatStatus(node.status);
+        const matchesFilter =
+            filter === "ALL" ||
+            (filter === "ALERT" && normalized === "ALERT") ||
+            normalized === filter;
+
+        return matchesSearch && matchesFilter;
+    });
+
+    filtered.forEach(node => {
+        const tr = document.createElement("tr");        if (node.is_offline) tr.classList.add("offline-row");
+
+        tr.innerHTML = `
+            <td>${node.node_id}</td>
+            <td>${node.ip}</td>
+            <td>${node.hostname}</td>
+            <td>${node.cpu.toFixed(1)}%</td>
+            <td>${node.mem.toFixed(1)}%</td>
+            <td>${node.disk.toFixed(1)}%</td>
+            <td><span class="${badgeClass(node.status)}">${formatStatus(node.status)}</span></td>
+            <td>${node.time}${node.is_offline ? ` <span class="muted">(${node.seconds_since_seen}s ago)</span>` : ""}</td>
+        `;
+
+        tbody.appendChild(tr);
+    });
+
+    if (filtered.length === 0) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td colspan="8" class="empty-state">No matching nodes.</td>`;
+        tbody.appendChild(tr);
+    }
+}
+
+function renderAlerts(alerts) {
+    const container = document.getElementById("alertsPanel");
+    if (!alerts.length) {
+        container.className = "alerts-list empty-state";
+        container.textContent = "No alerts yet.";
+        return;
+    }
+
+    container.className = "alerts-list";
+    container.innerHTML = "";
+    alerts.forEach(alert => {
+        const item = document.createElement("div");
+        item.className = "alert-item";
+        item.innerHTML = `
+            <div class="alert-top">
+                <strong>${alert.node_id}</strong>
+                <span class="muted">${alert.time}</span>
+            </div>
+            <div class="alert-body">${alert.status}</div>
+            <div class="alert-sub muted">${alert.hostname} · ${alert.ip}</div>
+        `;
+        container.appendChild(item);
+    });
+}
+
+function renderHistory(history) {
+    const tbody = document.querySelector("#historyTable tbody");
+    tbody.innerHTML = "";
+
+    if (!history.length) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td colspan="6" class="empty-state">No packet history yet.</td>`;
+        tbody.appendChild(tr);
+        return;
+    }
+
+    history.slice().reverse().forEach(item => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td>${item.node_id}</td>
+            <td>${item.cpu.toFixed(1)}%</td>
+            <td>${item.mem.toFixed(1)}%</td>
+            <td>${item.disk.toFixed(1)}%</td>
+            <td><span class="${badgeClass(item.status)}">${formatStatus(item.status)}</span></td>
+            <td>${item.time}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function drawAxes(ctx, left, top, width, height) {
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(left, top);
+    ctx.lineTo(left, top + height);
+    ctx.lineTo(left + width, top + height);
+    ctx.stroke();
+}
+
+function drawLegend(ctx, items, x, y) {
+    ctx.font = "12px Arial";
+    items.forEach((item, index) => {
+        const offsetX = x + (index * 130);
+        ctx.fillStyle = item.color;
+        ctx.fillRect(offsetX, y, 12, 12);
+        ctx.fillStyle = "#cbd5e1";
+        ctx.fillText(item.label, offsetX + 18, y + 10);
+    });
+}
+
+function drawTrendChart(points) {
+    const canvas = document.getElementById("trendChart");
+    const ctx = canvas.getContext("2d");
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(0, 0, width, height);
+
+    const margin = {left: 48, right: 20, top: 22, bottom: 34};
+    const chartW = width - margin.left - margin.right;
+    const chartH = height - margin.top - margin.bottom;
+
+    drawAxes(ctx, margin.left, margin.top, chartW, chartH);
+
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "12px Arial";
+    for (let i = 0; i <= 5; i++) {
+        const y = margin.top + (chartH * i / 5);
+        const value = 100 - (20 * i);
+        ctx.fillText(String(value), 10, y + 4);
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.12)";
+        ctx.beginPath();
+        ctx.moveTo(margin.left, y);
+        ctx.lineTo(margin.left + chartW, y);
+        ctx.stroke();
+    }
+
+    if (!points.length) {
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "14px Arial";
+        ctx.fillText("No trend data yet.", width / 2 - 50, height / 2);
+        return;
+    }
+
+    const series = [
+        {key: "cpu", color: "#60a5fa", label: "CPU"},
+        {key: "mem", color: "#f59e0b", label: "Memory"},
+        {key: "disk", color: "#34d399", label: "Disk"},
+    ];
+
+    series.forEach(serie => {
+        ctx.strokeStyle = serie.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+
+        points.forEach((point, index) => {
+            const x = margin.left + (chartW * index / Math.max(points.length - 1, 1));
+            const y = margin.top + chartH - ((point[serie.key] / 100) * chartH);
+            if (index === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+
+        ctx.stroke();
+    });
+
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "11px Arial";
+    points.forEach((point, index) => {
+        if (index % Math.ceil(points.length / 6) === 0 || index === points.length - 1) {
+            const x = margin.left + (chartW * index / Math.max(points.length - 1, 1));
+            ctx.fillText(point.time, x - 16, height - 10);
+        }
+    });
+
+    drawLegend(ctx, series, margin.left, 8);
+}
+
+function drawComparisonChart(nodes) {
+    const canvas = document.getElementById("comparisonChart");
+    const ctx = canvas.getContext("2d");
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(0, 0, width, height);
+
+    const margin = {left: 50, right: 20, top: 24, bottom: 55};
+    const chartW = width - margin.left - margin.right;
+    const chartH = height - margin.top - margin.bottom;
+
+    drawAxes(ctx, margin.left, margin.top, chartW, chartH);
+
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "12px Arial";
+    for (let i = 0; i <= 5; i++) {
+        const y = margin.top + (chartH * i / 5);
+        const value = 100 - (20 * i);
+        ctx.fillText(String(value), 12, y + 4);
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.12)";
+        ctx.beginPath();
+        ctx.moveTo(margin.left, y);
+        ctx.lineTo(margin.left + chartW, y);
+        ctx.stroke();
+    }
+
+    if (!nodes.length) {
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "14px Arial";
+        ctx.fillText("No node data yet.", width / 2 - 45, height / 2);
+        return;
+    }
+
+    const metrics = [
+        {key: "cpu", color: "#60a5fa", label: "CPU"},
+        {key: "mem", color: "#f59e0b", label: "Memory"},
+        {key: "disk", color: "#34d399", label: "Disk"},
+    ];
+
+    const groupWidth = chartW / nodes.length;
+    const innerGroup = Math.min(72, groupWidth * 0.78);
+    const barWidth = innerGroup / 3 - 6;
+
+    nodes.forEach((node, index) => {
+        const centerX = margin.left + groupWidth * index + groupWidth / 2;
+        const startX = centerX - innerGroup / 2;
+
+        metrics.forEach((metric, mIndex) => {
+            const value = node[metric.key];
+            const barHeight = (value / 100) * chartH;
+            const x = startX + mIndex * (barWidth + 6);
+            const y = margin.top + chartH - barHeight;
+
+            ctx.fillStyle = metric.color;
+            ctx.fillRect(x, y, barWidth, barHeight);
+        });
+
+        ctx.fillStyle = "#cbd5e1";
+        ctx.font = "11px Arial";
+        const label = node.node_id;
+        ctx.fillText(label, centerX - Math.min(20, label.length * 2.5), height - 18);
+    });
+
+    drawLegend(ctx, metrics, margin.left, 8);
+}
+
+async function loadTrend(nodeId) {
+    if (!nodeId) {
+        drawTrendChart([]);
+        return;
+    }
+    const response = await fetch(`/api/trends/${encodeURIComponent(nodeId)}`);
+    const data = await response.json();
+    latestTrendData = data;
+    document.getElementById("trendTitle").textContent = `Trend for ${nodeId}`;
+    drawTrendChart(data);
+}
+
+async function refreshDashboard() {
+    const response = await fetch("/api/dashboard");
+    dashboardData = await response.json();
+
+    updateSummary(dashboardData.summary);
+    renderNodes(dashboardData.nodes);
+    renderAlerts(dashboardData.alerts);
+    renderHistory(dashboardData.history);
+    drawComparisonChart(dashboardData.nodes);
+
+    document.getElementById("lastUpdated").textContent = new Date().toLocaleTimeString();
+}
+
+document.getElementById("searchInput").addEventListener("input", () => {
+    if (dashboardData) renderNodes(dashboardData.nodes);
+});
+document.getElementById("statusFilter").addEventListener("change", () => {
+    if (dashboardData) renderNodes(dashboardData.nodes);
+});
+
+refreshDashboard();
+setInterval(refreshDashboard, 2000);
+</script>
+</body>
+</html>
